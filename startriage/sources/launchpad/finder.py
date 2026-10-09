@@ -139,16 +139,30 @@ def _fast_target_name(obj) -> str:
     return obj.target_link.split("/")[-1]
 
 
-def _search_tasks_all_series(distro, *args, **kwargs):
-    """Search structural/subscriber tasks across all active series (LP #314432 workaround)."""
-    result = {(task.bug_link, _fast_target_name(task)): task for task in distro.searchTasks(*args, **kwargs)}
+def _search_tasks_all_series(distro, **kwargs) -> dict[tuple[str, str], object]:
+    """Search tasks across all active series (LP #314432 workaround), keyed by (bug_link, target)."""
+    result = {(task.bug_link, _fast_target_name(task)): task for task in distro.searchTasks(**kwargs)}
     for series in distro.series_collection:
         if not series.active:
             continue
         result.update(
-            {(task.bug_link, _fast_target_name(task)): task for task in series.searchTasks(*args, **kwargs)}
+            {(task.bug_link, _fast_target_name(task)): task for task in series.searchTasks(**kwargs)}
         )
-    return result.values()
+    return result
+
+
+def _modified_in(start: datetime, end: datetime) -> dict[str, datetime]:
+    """searchTasks arguments for the closed interval [start, end]."""
+    # Launchpad compares exclusively (> since, < before) at microsecond precision
+    step = timedelta(microseconds=1)
+    return {"modified_since": start - step, "modified_before": end + step}
+
+
+def _search_team_tasks(distro, team, **kwargs) -> tuple[dict[tuple[str, str], object], set[tuple[str, str]]]:
+    """Search tasks the team is subscribed to, structurally or directly; also return the direct ones' keys."""
+    # searchTasks ANDs structural_subscriber and bug_subscriber, so OR them here
+    direct = _search_tasks_all_series(distro, bug_subscriber=team, **kwargs)
+    return _search_tasks_all_series(distro, structural_subscriber=team, **kwargs) | direct, set(direct)
 
 
 # Per-user events to ignore when computing last activity.
@@ -275,39 +289,13 @@ def fetch_bugs(
 
     match mode:
         case FetchMode.triage:
-            logger.debug("fetching tasks since start %s...", filter.start)
-            bugs_start = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    modified_since=filter.start,
-                    structural_subscriber=team,
-                    status=POSSIBLE_BUG_STATUSES,
-                )
-            }
-            logger.debug("fetching tasks since end %s...", filter.end)
-            bugs_end = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    modified_since=filter.end,
-                    structural_subscriber=team,
-                    status=POSSIBLE_BUG_STATUSES,
-                )
-            }
-            logger.debug("fetching subscribed tasks since start %s...", filter.start)
-            already_subscribed = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    modified_since=filter.start,
-                    structural_subscriber=team,
-                    bug_subscriber=team,
-                    status=POSSIBLE_BUG_STATUSES,
-                )
-            }
-            logger.debug("intersecting tasks %d start from %d end tasks", len(bugs_start), len(bugs_end))
-            bugs_in_range = {k: v for k, v in bugs_start.items() if k not in bugs_end}
+            logger.debug("fetching tasks modified in %s..%s...", filter.start, filter.end)
+            bugs_in_range, direct_subscriptions = _search_team_tasks(
+                ubuntu,
+                team,
+                **_modified_in(filter.start, filter.end),
+                status=POSSIBLE_BUG_STATUSES,
+            )
 
         case FetchMode.todo:
             # A bug tagged both todo and freezer counts as todo (actionable).
@@ -315,30 +303,24 @@ def fetch_bugs(
             if team_config.lp_freezer_tag:
                 tags.append(team_config.lp_freezer_tag)
             logger.debug("fetching todo tasks (tags %s)...", tags)
-            bugs_in_range = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    tags=tags,
-                    tags_combinator="Any",
-                    status=TRACKED_BUG_STATUSES,
-                )
-            }
-            already_subscribed = {}
+            bugs_in_range = _search_tasks_all_series(
+                ubuntu,
+                tags=tags,
+                tags_combinator="Any",
+                status=TRACKED_BUG_STATUSES,
+            )
+            direct_subscriptions = set()
 
         case FetchMode.subscribed:
             logger.debug("fetching subscribed tasks (subscriber = %s)...", team)
-            bugs_in_range = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    bug_subscriber=team,
-                    tags=["-bot-stop-nagging", f"-{team_config.lp_todo_tag}"],
-                    tags_combinator="All",
-                    status=OPEN_BUG_STATUSES,
-                )
-            }
-            already_subscribed = bugs_in_range
+            bugs_in_range = _search_tasks_all_series(
+                ubuntu,
+                bug_subscriber=team,
+                tags=["-bot-stop-nagging", f"-{team_config.lp_todo_tag}"],
+                tags_combinator="All",
+                status=OPEN_BUG_STATUSES,
+            )
+            direct_subscriptions = set(bugs_in_range)
 
         case _:
             raise ValueError(f"Unknown fetch mode: {mode!r}")
@@ -350,8 +332,6 @@ def fetch_bugs(
         src = _fast_target_name(lp_task)
         if src in team_config.lp_ignore_packages:
             continue
-        is_subscribed = (bug_link, src) in already_subscribed
-
         is_ours = _last_activity_ours(bugs_touched_by_us_last, src, bug_link, lp_task, team_user_links)
 
         # Apply update filter (triage mode only)
@@ -363,8 +343,8 @@ def fetch_bugs(
 
         task = Task(
             lp_task,
-            subscribed=is_subscribed,
             last_activity_ours=is_ours,
+            direct_subscription=(bug_link, src) in direct_subscriptions,
         )
         logger.debug("listing bug task %s for pkg %s bug %s", task, src, bug_link)
         if (
@@ -378,46 +358,35 @@ def fetch_bugs(
         else:
             tasks.add(task)
 
-    # Expiration section: bugs that fell through the triage window N days ago.
-    # Uses the same shifted-window set-difference pattern as the main triage query.
+    # Expiration section: bugs last touched in the triage window shifted N days back.
     expire_level1: list[Task] = []
     expire_level2: list[Task] = []
     if mode == FetchMode.triage and filter.show_expiration and filter.start and filter.end:
 
         def _expiring_window(days: int) -> list[Task]:
             shift = timedelta(days=days)
-            w_start = filter.start - shift
-            w_end = filter.end - shift
-
-            since_start = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    modified_since=w_start,
-                    structural_subscriber=team,
-                    status=OPEN_BUG_STATUSES,
-                )
-            }
-            since_end = {
-                (t.bug_link, _fast_target_name(t)): t
-                for t in _search_tasks_all_series(
-                    ubuntu,
-                    modified_since=w_end,
-                    structural_subscriber=team,
-                    status=OPEN_BUG_STATUSES,
-                )
-            }
+            in_window, direct = _search_team_tasks(
+                ubuntu,
+                team,
+                **_modified_in(filter.start - shift, filter.end - shift),
+                status=OPEN_BUG_STATUSES,
+            )
             result = []
-            for bug_ref, lp_task in since_start.items():
-                if bug_ref in since_end:
-                    continue
+            for bug_ref, lp_task in in_window.items():
                 src = _fast_target_name(lp_task)
                 if src in team_config.lp_ignore_packages:
                     continue
                 is_ours = _last_activity_ours(
                     bugs_touched_by_us_last, src, bug_ref[0], lp_task, team_user_links
                 )
-                result.append(Task(lp_task, subscribed=True, last_activity_ours=is_ours, expiring=True))
+                result.append(
+                    Task(
+                        lp_task,
+                        last_activity_ours=is_ours,
+                        direct_subscription=bug_ref in direct,
+                        expiring=True,
+                    )
+                )
             return result
 
         logger.debug("fetching expiring bugs level 1 (~%d days ago)\u2026", expire_level1_days)

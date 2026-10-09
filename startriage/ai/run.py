@@ -77,7 +77,7 @@ def gather_user_bug_payloads(lp: Launchpad, bug_specs: list[str]) -> list[dict[s
             if not bug_tasks:
                 logger.warning("Skipping bug %s: no bug tasks found", number)
                 continue
-            task = Task(bug_tasks[0], subscribed=False, last_activity_ours=False)
+            task = Task(bug_tasks[0], last_activity_ours=False)
             payloads.append(task.to_agent_payload())
         except Exception:
             logger.warning("Skipping bug %s: failed to fetch", number, exc_info=True)

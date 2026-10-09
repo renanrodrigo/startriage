@@ -99,9 +99,13 @@ class Task:
     """
 
     def __init__(
-        self, lp_task: Any, subscribed: bool, last_activity_ours: bool, expiring: bool = False
+        self,
+        lp_task: Any,
+        last_activity_ours: bool,
+        direct_subscription: bool = False,
+        expiring: bool = False,
     ) -> None:
-        self.subscribed: bool | None = subscribed
+        self.direct_subscription = direct_subscription
         self.last_activity_ours: bool | None = last_activity_ours
         self.expiring: bool = expiring
 
@@ -275,7 +279,7 @@ class Task:
         v_needed = mark("v", COLOR_STATUS_WAITOTHER)
         v_done = mark("V", COLOR_STATUS_DONE)
         return (
-            ("*" if self.subscribed else " ")
+            ("*" if self.direct_subscription else " ")
             + ("+" if not self.last_activity_ours else " ")
             + ("U" if self._is_updated(ctx) else "X" if self.expiring else "O" if self._is_old(ctx) else " ")
             + ("N" if newbug else " ")
@@ -389,7 +393,7 @@ class Task:
 
     def report_flags(self, ctx: RenderContext) -> set[Flag]:
         checks = {
-            Flag.SUBSCRIBED: self.subscribed,
+            Flag.DIRECT_SUBSCRIPTION: self.direct_subscription,
             Flag.EXTERNAL: not self.last_activity_ours,
             Flag.RECENT: self._is_updated(ctx),
             Flag.OLD: self._is_old(ctx),
@@ -435,7 +439,7 @@ class Task:
             "assignee": self.assignee,
             "all_assignees": self.all_assignees,
             "is_expiring": self.expiring,
-            "is_maintainer_subscribed": self.subscribed,
+            "is_direct_subscription": self.direct_subscription,
             "is_last_activity_by_maintainer": self.last_activity_ours,
             "is_updated_recently": self._is_updated(ctx),
             "is_old": self._is_old(ctx),

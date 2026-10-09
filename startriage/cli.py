@@ -150,7 +150,7 @@ def _build_parser() -> argparse.ArgumentParser:
         add_help=False,
         epilog="""\
 Terminal output — bug flags column (left to right):
-  *  subscribed by the team
+  *  direct subscription by the team
   +  last activity NOT from the team (reply pending)
   U  updated recently (within --flag-recent days)
   O  old / dormant (beyond --flag-old days)

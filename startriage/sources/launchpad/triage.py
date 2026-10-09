@@ -313,7 +313,7 @@ def _bugs_to_tasks(bug_numbers: list[str], lp: Launchpad) -> list[Task]:
     tasks = []
     for number in bug_numbers:
         for lp_task in lp.bugs[number].bug_tasks:
-            tasks.append(Task(lp_task, subscribed=False, last_activity_ours=False))
+            tasks.append(Task(lp_task, last_activity_ours=False))
     return tasks
 
 

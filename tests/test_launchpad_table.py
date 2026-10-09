@@ -43,7 +43,7 @@ class _FakeLPTask:
 
 
 def _make_task(number: str) -> Task:
-    return Task(_FakeLPTask(number), subscribed=False, last_activity_ours=True)
+    return Task(_FakeLPTask(number), last_activity_ours=True)
 
 
 @pytest.mark.parametrize("number", ["815", "1234567", "20000001"])

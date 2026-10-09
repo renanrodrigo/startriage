@@ -34,7 +34,7 @@ class OutputConfig:
 
 
 class Flag(StrEnum):
-    SUBSCRIBED = "subscribed"
+    DIRECT_SUBSCRIPTION = "direct-subscription"  # the team is subscribed to the bug itself
     EXTERNAL = "external"  # last activity not by the team
     RECENT = "recent"
     OLD = "old"

@@ -96,7 +96,7 @@ def _build_task(duplicate_of=None) -> Task:
     devel_task.bug = bug
     jammy_task.bug = bug
 
-    return Task(devel_task, subscribed=False, last_activity_ours=False)
+    return Task(devel_task, last_activity_ours=False)
 
 
 def test_to_agent_payload_core_fields():
@@ -156,10 +156,10 @@ def test_to_agent_payload_duplicate_of():
 def test_assignee_from_person_link():
     task = _build_task()
     task.lp_task.assignee_link = "https://api.launchpad.net/devel/~jane"
-    assert Task(task.lp_task, subscribed=False, last_activity_ours=False).assignee == "jane"
+    assert Task(task.lp_task, last_activity_ours=False).assignee == "jane"
 
 
 def test_assignee_from_non_person_link():
     task = _build_task()
     task.lp_task.assignee_link = "https://api.launchpad.net/devel/someproject"
-    assert Task(task.lp_task, subscribed=False, last_activity_ours=False).assignee == "someproject"
+    assert Task(task.lp_task, last_activity_ours=False).assignee == "someproject"
