@@ -20,8 +20,13 @@ uv run startriage
 ```bash
 # Daily triage (yesterday's activity, or Friday–Sunday if today is Monday)
 startriage triage
-# Generate a markdown report as template for discourse alongside
+
+# Generate an interactive HTML report
+# that allows filling a discourse post markdown template
 # (remember /tmp/ is private when running as snap)
+startriage triage --html ~/triage.html
+
+# Generate a markdown report as template for discourse alongside
 startriage triage --markdown ~/triage-summary.md
 
 # Specify a team explicitly
@@ -38,7 +43,7 @@ startriage triage -i 2026-04-14:2026-04-18  # range is inclusive
 
 # Housekeeping: server-todo tagged bugs with assignees
 startriage todo
-# Also write a checklist page for the housekeeping meeting
+# Generate an interactive web page as for a housekeeping meeting
 startriage todo --html ~/todo.html
 
 # Subscription backlog (ubuntu-server subscribed bugs)
