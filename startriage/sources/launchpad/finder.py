@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +18,6 @@ from launchpadlib.credentials import (
     UnencryptedFileCredentialStore,
 )
 from launchpadlib.launchpad import Launchpad
-from lazr.restfulclient.errors import ClientError
 
 from startriage.source import TaskFilterOptions
 
@@ -164,73 +164,79 @@ def _search_team_tasks(distro, team, **kwargs) -> tuple[dict[tuple[str, str], ob
     return _search_tasks_all_series(distro, structural_subscriber=team, **kwargs) | direct, set(direct)
 
 
-# Per-user events to ignore when computing last activity.
-# A bot listed here is only ignored for the specific whatchanged values given;
-# other events from the same account are still considered.
-_LP_IGNORE_EVENTS: dict[str, frozenset[str]] = {
-    "janitor": frozenset({"merge proposal linked"}),
+# Per-user events that are no triage activity, as regexes fully matching (whatchanged, new value);
+# comments are ("comment", content). Other events from the same account still count.
+_LP_IGNORE_EVENTS: dict[str, list[tuple[str, str]]] = {
+    "janitor": [
+        ("merge proposal linked", ".*"),
+        # closing a bug fixed by an upload
+        (".*: status", "Fix Released"),
+        ("comment", "This bug was fixed in the package .*"),
+        # expiring stale Incomplete bugs
+        (".*: status", "Expired"),
+        ("comment", r"\[Expired for .* because there has been no activity for \d+ days\.\]"),
+    ],
 }
 
 
-def _last_activity_ours(
-    bugs_touched_by_us_last: dict[str, bool], src_pkg: str, bug_link: str, lp_task, lp_user_links: set[str]
-) -> bool:
-    if bug_link not in bugs_touched_by_us_last:
+def _ignored(person_link: str | None, whatchanged: str, value: str | None) -> bool:
+    name = person_link.rpartition("/~")[2] if person_link else None
+    return any(
+        re.fullmatch(what, whatchanged, re.DOTALL) and re.fullmatch(pattern, value or "", re.DOTALL)
+        for what, pattern in _LP_IGNORE_EVENTS.get(name or "", ())
+    )
+
+
+def _last_relevant(entries, event) -> tuple[datetime, str | None] | None:
+    """Return (date, person_link) of the last entry that isn't ignored; event() unpacks an entry."""
+    for i in range(len(entries) - 1, -1, -1):
+        dt, person_link, whatchanged, value = event(entries[i])
+        if not _ignored(person_link, whatchanged, value):
+            return dt, person_link
+    return None
+
+
+def _last_activity(
+    cache: dict[str, tuple[datetime | None, bool]],
+    src_pkg: str,
+    bug_link: str,
+    lp_task,
+    lp_user_links: set[str],
+) -> tuple[datetime | None, bool]:
+    if bug_link not in cache:
         logger.debug("determining last activity for pkg %s bug %s", src_pkg, bug_link)
-        is_ours = _fetch_last_activity_ours(lp_task, lp_user_links)
-        logger.debug("last activity for pkg %s bug %s is ours: %s", src_pkg, bug_link, is_ours)
-        bugs_touched_by_us_last[bug_link] = is_ours
+        cache[bug_link] = _fetch_last_activity(lp_task, lp_user_links)
     else:
-        is_ours = bugs_touched_by_us_last[bug_link]
-        logger.debug("last activity for pkg %s bug %s is ours: %s (cached)", src_pkg, bug_link, is_ours)
+        logger.debug("last activity for pkg %s bug %s is cached", src_pkg, bug_link)
+    logger.debug("last activity for pkg %s bug %s (date, ours): %s", src_pkg, bug_link, cache[bug_link])
+    return cache[bug_link]
 
-    return is_ours
 
-
-def _fetch_last_activity_ours(task_obj, lp_user_links: set[str]) -> bool:
-    """Return True if the single most recent human bug event was by a team member.
+def _fetch_last_activity(task_obj, lp_user_links: set[str]) -> tuple[datetime | None, bool]:
+    """Return the date of the most recent relevant bug event, and whether a team member caused it.
 
     Considers both comments (bug.messages) and state/metadata changes
     (bug.activity) - LP provides no unified timeline, so the last item of
     each collection is compared and the more recent one wins.
 
-    Events listed in _LP_IGNORE_EVENTS for a given user are skipped so that
-    automated follow-ups to team actions do not hide our work.
+    Events in _LP_IGNORE_EVENTS are skipped: bot follow-ups neither hide who acted last
+    nor make a bug look changed.
     None person_link means an automated/system change — treated as external.
     """
-    if not lp_user_links:
-        return False
-
-    candidates: list[tuple[datetime, str | None]] = []
-
-    def _try_append(dt, person_obj, whatchanged: str | None = None) -> None:
-        try:
-            name = person_obj.name if person_obj else None
-            ignore = _LP_IGNORE_EVENTS.get(name) if name else None
-            if ignore and whatchanged and whatchanged in ignore:
-                return
-            candidates.append((dt, person_obj.self_link if person_obj else None))
-        except ClientError as exc:
-            if exc.response["status"] != "410":  # user deleted
-                raise
-
-    msgs = task_obj.bug.messages
-    n_msgs = len(msgs)
-    if n_msgs > 0:
-        msg = msgs[n_msgs - 1]
-        _try_append(msg.date_created, msg.owner)
-
-    activity = task_obj.bug.activity
-    n_act = len(activity)
-    if n_act > 0:
-        entry = activity[n_act - 1]
-        _try_append(entry.datechanged, entry.person, entry.whatchanged)
-
+    bug = task_obj.bug
+    candidates = [
+        c
+        for c in (
+            _last_relevant(bug.messages, lambda m: (m.date_created, m.owner_link, "comment", m.content)),
+            _last_relevant(bug.activity, lambda a: (a.datechanged, a.person_link, a.whatchanged, a.newvalue)),
+        )
+        if c is not None
+    ]
     if not candidates:
-        return False
+        return None, False
 
-    _, last_person_link = max(candidates, key=lambda e: e[0])
-    return last_person_link is not None and last_person_link in lp_user_links
+    dt, person_link = max(candidates, key=lambda e: e[0])
+    return dt, person_link is not None and person_link in lp_user_links
 
 
 async def fetch_changelogs(
@@ -326,12 +332,16 @@ def fetch_bugs(
 
     tasks = set()
     freezer_tasks: list[Task] = []
-    bugs_touched_by_us_last: dict[str, bool] = {}
+    last_activity_cache: dict[str, tuple[datetime | None, bool]] = {}
     for (bug_link, _), lp_task in bugs_in_range.items():
         src = _fast_target_name(lp_task)
         if src in team_config.lp_ignore_packages:
             continue
-        is_ours = _last_activity_ours(bugs_touched_by_us_last, src, bug_link, lp_task, team_user_links)
+        last_date, is_ours = _last_activity(last_activity_cache, src, bug_link, lp_task, team_user_links)
+
+        # only ignored events in the window: nothing to triage
+        if mode == FetchMode.triage and last_date is not None and last_date < filter.start:
+            continue
 
         # Apply update filter (triage mode only)
         if mode == FetchMode.triage and update_filter:
@@ -375,9 +385,7 @@ def fetch_bugs(
                 src = _fast_target_name(lp_task)
                 if src in team_config.lp_ignore_packages:
                     continue
-                is_ours = _last_activity_ours(
-                    bugs_touched_by_us_last, src, bug_ref[0], lp_task, team_user_links
-                )
+                _, is_ours = _last_activity(last_activity_cache, src, bug_ref[0], lp_task, team_user_links)
                 result.append(
                     Task(
                         lp_task,
