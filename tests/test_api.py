@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,7 +24,7 @@ from startriage.sources.proposed.triage import ProposedMigrationTriage
 from startriage.triage import build_filter, fetch
 
 START = datetime(2026, 9, 28, tzinfo=timezone.utc)
-END = datetime(2026, 9, 28, 23, 59, 59, tzinfo=timezone.utc)
+END = START + timedelta(days=1)
 
 
 def _proposed() -> ProposedMigrationTriage:
@@ -49,7 +49,7 @@ def config(tmp_path):
 def test_build_filter(config):
     opts = build_filter(config, interval="2026-09-28", sources="proposed,github")
     assert opts.team == "ubuntu-server"
-    assert (opts.start.date(), opts.end.date()) == (START.date(), START.date())
+    assert (opts.start, opts.end) == (START, END)
     assert {s.name for s in opts.sources} == {"proposed", "github"}
 
 

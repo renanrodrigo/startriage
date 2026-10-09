@@ -152,10 +152,9 @@ def _search_tasks_all_series(distro, **kwargs) -> dict[tuple[str, str], object]:
 
 
 def _modified_in(start: datetime, end: datetime) -> dict[str, datetime]:
-    """searchTasks arguments for the closed interval [start, end]."""
-    # Launchpad compares exclusively (> since, < before) at microsecond precision
-    step = timedelta(microseconds=1)
-    return {"modified_since": start - step, "modified_before": end + step}
+    """searchTasks arguments for the half-open interval [start, end)."""
+    # Launchpad compares `> modified_since`, at microsecond precision
+    return {"modified_since": start - timedelta(microseconds=1), "modified_before": end}
 
 
 def _search_team_tasks(distro, team, **kwargs) -> tuple[dict[tuple[str, str], object], set[tuple[str, str]]]:

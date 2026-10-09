@@ -45,7 +45,7 @@ def _make_headers(token: str | None) -> dict[str, str]:
 def _in_range(dt: datetime | None, start: datetime | None, end: datetime | None) -> bool:
     if dt is None or start is None or end is None:
         return False
-    return start <= dt <= end
+    return start <= dt < end
 
 
 async def _graphql(
@@ -116,7 +116,7 @@ def _is_actionable(
     start: datetime,
     end: datetime,
 ) -> bool:
-    """True if the item has meaningful activity within [start, end]."""
+    """True if the item has meaningful activity within [start, end)."""
     return (
         _in_range(item.created_at, start, end)
         or _in_range(item.last_edited_at, start, end)

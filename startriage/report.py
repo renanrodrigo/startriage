@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import date, time
 
 from .config import StarTriageConfig
-from .dates import compact_date_range, reverse_triage_task_day
+from .dates import compact_date_range, last_day, reverse_triage_task_day
 from .htmlreport import write_report
 from .output import OutputConfig, OutputFormat, TriageResult, json_default
 from .source import FetchMode, TaskFilterOptions
@@ -36,24 +36,19 @@ async def triage(
 
     # show date range once before any section output
     if opts.start and opts.end:
-        _day_range = opts.start.time() == time.min and opts.end.time() == time.max
-        if _day_range:
-            range = f" {compact_date_range(opts.start, opts.end)}"
-            start_str = opts.start.strftime("%Y-%m-%d (%A)")
-            end_str = opts.end.strftime("%Y-%m-%d (%A)")
-            same = opts.start.date() == opts.end.date()
+        first, last = opts.start.date(), last_day(opts.end)
+        if opts.start.time() == time.min and opts.end.time() == time.min:
+            range = f" {compact_date_range(first, last)}"
+            first_str, last_str = (d.strftime("%Y-%m-%d (%A)") for d in (first, last))
+            if first == last:
+                range_verbose = f"on {first_str}"
+            else:
+                range_verbose = f"between {first_str} and {last_str} inclusive"
         else:
             range = f" {opts.start.isoformat()}->{opts.end.isoformat()}"
-            start_str = opts.start.isoformat()
-            end_str = opts.end.isoformat()
-            same = opts.start == opts.end
+            range_verbose = f"from {opts.start.isoformat()} until {opts.end.isoformat()}"
 
-        if same:
-            range_verbose = f"on {start_str}"
-        else:
-            range_verbose = f"between {start_str} and {end_str} inclusive"
-
-        triage_task_name = reverse_triage_task_day(opts.start, opts.end)
+        triage_task_name = reverse_triage_task_day(first, last)
 
         if triage_task_name:
             triage_task_note = f' ("{triage_task_name}")'
@@ -84,7 +79,7 @@ async def triage(
 
         if output_cfg.html_path:
             subtitle = f"team {opts.team}" + (f", items updated {range_verbose}" if range_verbose else "")
-            days = dict.fromkeys(d.date().isoformat() for d in (opts.start, opts.end) if d)
+            days = dict.fromkeys(d.isoformat() for d in (opts.start.date(), last_day(opts.end)))
             filename = "-".join(["triage", *days]) + ".md"
             await write_report(
                 output_cfg.html_path,

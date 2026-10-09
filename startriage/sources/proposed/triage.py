@@ -9,6 +9,7 @@ from typing import Any
 import aiohttp
 
 from ...config import StarTriageConfig
+from ...dates import last_day
 from ...output import (
     Link,
     OutputConfig,
@@ -233,7 +234,7 @@ async def find(
     cutoff = datetime.now(timezone.utc) - timedelta(days=_RECENT_THRESHOLD_DAYS)
     if opts.end < cutoff:
         reason = (
-            f"triage interval ends {opts.end.date().isoformat()}, "
+            f"triage interval ends {last_day(opts.end).isoformat()}, "
             f"more than {_RECENT_THRESHOLD_DAYS} days ago "
             "(proposed-migration only reflects the current archive state)"
         )

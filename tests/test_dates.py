@@ -24,8 +24,8 @@ def _dt_start(s: str) -> datetime.datetime:
 
 
 def _dt_end(s: str) -> datetime.datetime:
-    """Last microsecond of the given date UTC -- the expected end of an interval."""
-    return datetime.datetime.combine(_d(s), datetime.time.max, tzinfo=datetime.timezone.utc)
+    """Midnight UTC after the given date -- the expected (exclusive) end of an interval."""
+    return _dt_start(s) + datetime.timedelta(days=1)
 
 
 # --- reverse_auto_date_range ---

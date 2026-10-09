@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+
+
+def _day_interval(first: date, last: date) -> tuple[datetime, datetime]:
+    """The half-open UTC interval [first 00:00, day after last 00:00)."""
+    return (
+        datetime.combine(first, time.min, tzinfo=timezone.utc),
+        datetime.combine(last + timedelta(days=1), time.min, tzinfo=timezone.utc),
+    )
+
+
+def last_day(end: datetime) -> date:
+    """The last day included in an interval ending (exclusively) at *end*."""
+    return (end - timedelta(microseconds=1)).date()
 
 
 def triage_task_date_range(keyword: str | None, today: date | None = None) -> tuple[datetime, datetime]:
-    """Given a day-of-week keyword, calculate the inclusive triage date range.
+    """Given a day-of-week keyword, calculate the half-open triage interval [start, end).
 
     Monday triage covers the previous Friday, Saturday and Sunday.
     Tuesday-Friday triage covers only the previous day.
@@ -46,10 +59,7 @@ def triage_task_date_range(keyword: str | None, today: date | None = None) -> tu
         # Normal weekday triage: previous day only
         start = end = triage_day - timedelta(days=1)
 
-    start = datetime.combine(start, datetime.min.time()).replace(tzinfo=timezone.utc)
-    end = datetime.combine(end, datetime.max.time()).replace(tzinfo=timezone.utc)
-
-    return start, end
+    return _day_interval(start, end)
 
 
 def reverse_triage_task_day(start: date, end: date) -> str | None:
@@ -136,7 +146,7 @@ def _parse_single_date(token: str, relative_to: date | None = None) -> date:
 
 
 def parse_interval(arg: str | None, relative_to: date | None = None) -> tuple[datetime, datetime]:
-    """Parse a -i / --interval argument into an inclusive (start, end) date pair.
+    """Parse a -i / --interval argument (inclusive days) into a half-open interval [start, end).
 
     Formats accepted:
       YYYY-MM-DD               -> single day
@@ -173,10 +183,7 @@ def parse_interval(arg: str | None, relative_to: date | None = None) -> tuple[da
         # Single date or day name → single-day range
         start = end = _parse_single_date(arg, ref)
 
-    start = datetime.combine(start, datetime.min.time()).replace(tzinfo=timezone.utc)
-    end = datetime.combine(end, datetime.max.time()).replace(tzinfo=timezone.utc)
-
-    return start, end
+    return _day_interval(start, end)
 
 
 def compact_date_range(start: date, end: date) -> str:
