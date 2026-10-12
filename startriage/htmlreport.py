@@ -49,24 +49,38 @@ _CHIPS = {
     Flag.EXPIRING: "expiring",
 }
 
+# launchpad importances, most important first
+_IMPORTANCE = ["Critical", "High", "Medium", "Low", "Wishlist", "Undecided", "Unknown"]
+
+
+# empty values sort last, like the page's column sorting
+def _by_date(item: ReportItem) -> tuple:
+    return (item.updated is None, item.updated or datetime.min)
+
+
+def _by_assignee(item: ReportItem) -> tuple:
+    assignees = ", ".join(link.text for link in item.assignees).casefold()
+    return (not assignees, assignees, *_by_date(item))
+
 
 def todo_sections(items: list[ReportItem]) -> list[tuple[str, list[ReportItem]]]:
-    """Put each item into the first matching housekeeping section, stalest first."""
+    """Put each item into the first matching housekeeping section, by assignee, then stalest first."""
     sections: dict[str, list[ReportItem]] = {name: [] for name in _TODO_ORDER}
     for item in items:
         name = next(name for name, match in _TODO_RULES if match(item))
         sections[name].append(item)
-    for section in sections.values():
-        section.sort(key=lambda i: (i.updated is None, i.updated or datetime.min))
-    return list(sections.items())
+    return [(name, sorted(section, key=_by_assignee)) for name, section in sections.items()]
 
 
 def triage_sections(items: list[ReportItem]) -> list[tuple[str, list[ReportItem]]]:
-    """One section per source."""
+    """One section per source, oldest first."""
     sections: dict[str, list[ReportItem]] = {name: [] for name in _TRIAGE_ORDER}
     for item in items:
         sections.setdefault(item.source, []).append(item)
-    return [(_TRIAGE_TITLES.get(name, name.capitalize()), section) for name, section in sections.items()]
+    return [
+        (_TRIAGE_TITLES.get(name, name.capitalize()), sorted(section, key=_by_date))
+        for name, section in sections.items()
+    ]
 
 
 async def write_report(
@@ -88,9 +102,12 @@ async def write_report(
             continue
         items.extend(await result.report_items(persistor))
 
-    sections = triage_sections(items) if mode == FetchMode.triage else todo_sections(items)
+    if mode == FetchMode.triage:
+        sections, sorted_by = triage_sections(items), "Updated"
+    else:
+        sections, sorted_by = todo_sections(items), "Assignee"
     generated = datetime.now().astimezone()
-    page = render_page(title, subtitle, sections, generated, errors, markdown, filename)
+    page = render_page(title, subtitle, sections, generated, errors, markdown, filename, sorted_by)
     path.write_text(page, encoding="utf-8")
 
 
@@ -102,11 +119,13 @@ def render_page(
     errors: list[str] | None = None,
     markdown: str | None = None,
     filename: str = "report.md",
+    sorted_by: str | None = None,
 ) -> str:
+    """*sorted_by* is the header of the column the rows are sorted by, leading key."""
     if markdown is None:
         markdown = sections_markdown(title, sections)
     template = Template((files("startriage") / "data" / "report.html").read_text(encoding="utf-8"))
-    body = "".join(_section(name, items) for name, items in sections if items)
+    body = "".join(_section(name, items, sorted_by) for name, items in sections if items)
     if errors:
         body = f'<p class="error">Fetching failed: {escape(", ".join(errors))}</p>' + body
     return template.substitute(
@@ -134,12 +153,16 @@ def sections_markdown(title: str, sections: list[tuple[str, list[ReportItem]]]) 
     return "\n".join(lines)
 
 
-def _section(name: str, items: list[ReportItem]) -> str:
+def _section(name: str, items: list[ReportItem], sorted_by: str | None) -> str:
     rows = "".join(_row(item) for item in items)
     sources = dict.fromkeys(item.source for item in items)
     context = " / ".join(_CONTEXT_LABELS.get(source, "") for source in sources)
     headers = ["", "Item", context, "Release", "Status", "Prio", "Assignee", "Updated", "Title"]
-    head = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    head = ""
+    for header in headers:
+        sort = ' aria-sort="ascending"' if header and header == sorted_by else ""
+        button = f'<button class="sort" title="Sort, ties keep the previous order">{escape(header)}</button>'
+        head += f"<th{sort}>{button if header else ''}</th>"
     return (
         f'<section><h2>{escape(name)} <span class="count">{len(items)}</span></h2>'
         f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></section>"
@@ -171,13 +194,14 @@ def _row(item: ReportItem) -> str:
     refs = f' <span class="refs">{_links(item.refs)}</span>' if item.refs else ""
     updated = item.updated.strftime("%Y-%m-%d") if item.updated else ""
     assignees = ", ".join(link.text for link in item.assignees)
+    prio = f' data-sort="{_IMPORTANCE.index(item.importance)}"' if item.importance in _IMPORTANCE else ""
     row_id = escape(f"{item.source}-{item.key}")
     return (
         f'<tr id="{row_id}" data-url="{escape(item.url)}">'
         '<td><button class="check" title="Done, hide this row">\u2713</button></td>'
         f'<td><a href="{escape(item.url)}">{escape(item.label)}</a></td>'
         f'<td title="{escape(item.context_text)}">{_links(item.context)}</td><td>{releases}</td>'
-        f"<td>{escape(item.status)}</td><td>{escape(item.importance)}</td>"
+        f"<td>{escape(item.status)}</td><td{prio}>{escape(item.importance)}</td>"
         f'<td title="{escape(assignees)}">{_links(item.assignees, ", ")}</td><td>{updated}</td>'
         f'<td><div class="title"><span>{escape(item.title)}{refs}</span>{chips}'
         '<button class="add-comment reveal" title="Comment for the markdown report">\U0001f4ac</button></div>'

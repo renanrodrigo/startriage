@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from startriage.config import UpdateFilter
-from startriage.htmlreport import render_page, todo_sections, write_report
+from startriage.htmlreport import render_page, todo_sections, triage_sections, write_report
 from startriage.output import Flag, Link, ReportItem
 from startriage.savebugs import BugPersistor, SaveConfig
 from startriage.source import FetchMode
@@ -53,6 +53,23 @@ def test_todo_sections_first_match():
         "Freezer": ["1"],
         "Other": ["7"],
     }
+
+
+def test_sections_default_order():
+    items = [
+        _item("1", assignees=("bob",)),
+        _item("2", assignees=("Alice",)),
+        _item("3", assignees=("bob",)),
+        _item("4", assignees=()),
+    ]
+    items[0].updated = NOW
+    items[2].updated = datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    sections = dict(todo_sections(items))
+    assert [i.key for i in sections["Other"]] == ["2", "3", "1"]
+    assert [i.key for i in sections["No owner"]] == ["4"]
+
+    assert [i.key for i in dict(triage_sections(items))["Launchpad"]] == ["3", "1", "2", "4"]
 
 
 def test_render_page_escapes():

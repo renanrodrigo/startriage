@@ -104,6 +104,10 @@ th {
   border-bottom: var(--border);
   padding: 0.2rem 0.5rem;
 }
+button.sort { font-size: inherit; text-align: left; }
+button.sort:hover { color: var(--orange); }
+th[aria-sort=ascending] button.sort::after { content: " \25b4"; }
+th[aria-sort=descending] button.sort::after { content: " \25be"; }
 td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 tbody tr:nth-child(even) { background: var(--zebra); }
 tbody tr:hover { background: #fdf0eb; }
@@ -299,6 +303,31 @@ $body
       stack.push(id);
       save();
       update();
+    });
+  });
+
+  // A stable sort by the clicked column, so the previous order breaks its ties; empty cells last.
+  var collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  document.querySelectorAll("button.sort").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var th = button.closest("th");
+      var tbody = th.closest("table").querySelector("tbody");
+      var column = Array.prototype.indexOf.call(th.parentNode.children, th);
+      var sign = th.getAttribute("aria-sort") === "ascending" ? -1 : 1;
+      th.parentNode.querySelectorAll("th").forEach(function (other) { other.removeAttribute("aria-sort"); });
+      th.setAttribute("aria-sort", sign > 0 ? "ascending" : "descending");
+
+      function value(row) {
+        var cell = row.children[column];
+        return cell.dataset.sort !== undefined ? cell.dataset.sort : cell.textContent.trim();
+      }
+      Array.from(tbody.children)
+        .map(function (row) { return { row: row, value: value(row) }; })
+        .sort(function (a, b) {
+          if (!a.value || !b.value) return !a.value - !b.value;
+          return sign * collator.compare(a.value, b.value);
+        })
+        .forEach(function (entry) { tbody.appendChild(entry.row); });
     });
   });
 
