@@ -13,7 +13,7 @@ from datetime import date, time
 from .config import StarTriageConfig
 from .dates import compact_date_range, last_day, reverse_triage_task_day
 from .htmlreport import write_report
-from .output import OutputConfig, OutputFormat, TriageResult, json_default
+from .output import FailedTriageResult, OutputConfig, OutputFormat, TriageResult, json_default
 from .source import FetchMode, TaskFilterOptions
 from .spinner import Spinner
 from .triage import fetch
@@ -153,19 +153,17 @@ async def _triage_markdown(results: Mapping[str, TriageResult], range: str) -> s
 
 
 def print_fetch_errors(results: Mapping[str, TriageResult]) -> bool:
-    """Print errors for sources whose fetch failed; return True if any failed.
+    """Print tracebacks of sources whose fetch raised; return True if any fetch failed.
 
-    String errors are shown compactly on one line; exceptions get a full traceback.
+    The one-line summary of each error is printed as soon as its source fails, see ``_fetch_and_render``.
     """
     failed = False
     for source, result in results.items():
         if result.error is None:
             continue
         failed = True
-        print(f"\nError fetching {source!r}:", file=sys.stderr)
-        if isinstance(result.error, str):
-            print(f"  {result.error}", file=sys.stderr)
-        else:
+        if isinstance(result.error, Exception):
+            print(f"\nTraceback of fetching {source!r}:", file=sys.stderr)
             traceback.print_exception(result.error, file=sys.stderr)
     return failed
 
@@ -185,7 +183,11 @@ async def _fetch_and_render(
 
         async def render(source: str, result: TriageResult) -> None:
             spinner.done(source)
-            if result.error is not None or output_cfg.fmt == OutputFormat.JSON:
+            if isinstance(result, FailedTriageResult):
+                spinner.clear()
+                print(f"Error fetching {source!r}: {result.message.splitlines()[0]}", file=sys.stderr)
+                return
+            if output_cfg.fmt == OutputFormat.JSON:
                 return
 
             spinner.clear()

@@ -117,10 +117,14 @@ class FailedTriageResult(TriageResult):
     async def record(self, persistor: BugPersistor) -> None:
         """Nothing to persist for a failed fetch."""
 
-    async def to_dict(self) -> dict[str, Any]:
+    @property
+    def message(self) -> str:
         if isinstance(self.error, str):
-            return {"error": self.error}
-        return {"error": "".join(traceback.format_exception_only(self.error)).strip()}
+            return self.error
+        return "".join(traceback.format_exception_only(self.error)).strip()
+
+    async def to_dict(self) -> dict[str, Any]:
+        return {"error": self.message}
 
 
 def json_default(obj: object) -> str:

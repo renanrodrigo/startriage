@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from dataclasses import replace
@@ -11,7 +12,7 @@ import pytest
 
 from startriage.config import load_config
 from startriage.output import FailedTriageResult, OutputConfig, OutputFormat, TriageResult, json_default
-from startriage.report import triage
+from startriage.report import print_fetch_errors, triage
 from startriage.source import FetchMode, TriageSource
 from startriage.sources.discourse.finder import DiscourseFinder
 from startriage.sources.discourse.models import DiscoursePost, DiscourseTopic
@@ -75,6 +76,25 @@ async def test_fetch_captures_errors(config):
     assert results["ok"] is ok
     assert isinstance(results["bad"], FailedTriageResult)
     assert await results["bad"].to_dict() == {"error": "KeyError: 'x'"}
+
+
+@pytest.mark.asyncio
+async def test_error_reported_before_others_finish(config, capsys):
+    async def slow(config, opts, mode):
+        await asyncio.sleep(0.01)
+        # the failed source is reported already
+        assert "Error fetching 'bad': KeyError: 'x'\n" in capsys.readouterr().err
+        return _proposed()
+
+    opts = build_filter(config, interval="2026-09-28")
+    sources = {TriageSource(name="proposed", find=slow), _source("bad", KeyError("x"))}
+    opts = replace(opts, sources=frozenset(sources))
+
+    results = await triage(config, opts, OutputConfig(fmt=OutputFormat.JSON, out=io.StringIO()))
+
+    assert results["proposed"].error is None
+    assert print_fetch_errors(results)
+    assert "Traceback of fetching 'bad'" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio
