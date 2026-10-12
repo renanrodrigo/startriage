@@ -92,8 +92,9 @@ h2 {
 section.done h2 { color: var(--warm-grey); }
 section.done .count { background: var(--warm-grey); }
 section.done table { display: none; }
-/* one grid for all tables, so their columns line up: each as wide as its widest cell, the title takes the rest */
-main { display: grid; grid-template-columns: repeat(8, auto) minmax(0, 1fr); }
+/* one grid for all tables, so their columns line up: each as wide as its widest cell up to a limit, the title takes the rest */
+main { --column: fit-content(14rem); display: grid; grid-template-columns: repeat(8, var(--column)) minmax(0, 1fr); }
+main.resizing, main.resizing * { cursor: col-resize; user-select: none; }
 section, table, thead, tbody, tr { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; }
 main > p, h2 { grid-column: 1 / -1; }
 th {
@@ -103,7 +104,10 @@ th {
   color: var(--muted);
   border-bottom: var(--border);
   padding: 0.2rem 0.5rem;
+  position: relative;
 }
+.resize { position: absolute; top: 0; right: 0; bottom: 0; width: 0.5rem; cursor: col-resize; touch-action: none; }
+.resize:hover, main.resizing .resize:active { border-right: 2px solid var(--orange); }
 button.sort { font-size: inherit; text-align: left; }
 button.sort:hover { color: var(--orange); }
 th[aria-sort=ascending] button.sort::after { content: " \25b4"; }
@@ -113,7 +117,7 @@ tbody tr:nth-child(even) { background: var(--zebra); }
 tbody tr:hover { background: #fdf0eb; }
 tbody tr { cursor: text; }
 tbody a, tbody button { cursor: pointer; }
-td:not(:last-child) { max-width: 14rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th, td:not(:last-child) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.check {
   width: 1.5rem;
   height: 1.5rem;
@@ -328,6 +332,47 @@ $body
           return sign * collator.compare(a.value, b.value);
         })
         .forEach(function (entry) { tbody.appendChild(entry.row); });
+    });
+  });
+
+  // Dragging a header's right edge resizes its column in all sections, as they share one grid.
+  // A double click resets the column, a reload all of them.
+  var grid = document.querySelector("main");
+  var widths = {};  // column index -> px
+
+  function layout(count) {
+    var tracks = [];
+    for (var i = 0; i < count - 1; i++) tracks.push(widths[i] ? widths[i] + "px" : "var(--column)");
+    tracks.push("minmax(0, 1fr)");
+    grid.style.gridTemplateColumns = tracks.join(" ");
+  }
+
+  document.querySelectorAll("th:not(:last-child) button.sort").forEach(function (button) {
+    var th = button.closest("th");
+    var count = th.parentNode.children.length;
+    var column = Array.prototype.indexOf.call(th.parentNode.children, th);
+    var handle = document.createElement("span");
+    handle.className = "resize";
+    handle.title = "Drag to resize, double click to reset";
+    th.appendChild(handle);
+
+    var startX, startWidth;
+    handle.addEventListener("pointerdown", function (event) {
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      startX = event.clientX;
+      startWidth = th.getBoundingClientRect().width;
+      grid.classList.add("resizing");
+    });
+    handle.addEventListener("pointermove", function (event) {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      widths[column] = Math.max(24, Math.round(startWidth + event.clientX - startX));
+      layout(count);
+    });
+    handle.addEventListener("lostpointercapture", function () { grid.classList.remove("resizing"); });
+    handle.addEventListener("dblclick", function () {
+      delete widths[column];
+      layout(count);
     });
   });
 
