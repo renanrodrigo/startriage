@@ -318,10 +318,12 @@ def _bugs_to_tasks(bug_numbers: list[str], lp: Launchpad) -> list[Task]:
 
 
 def _print_section_header(label: str, tasks: list[Task], cfg: OutputConfig, extra: str = "") -> None:
+    """Section heading; markdown has no count, as it is a template reduced to the commented items."""
     count = len({t.number for t in tasks})
     plural = "item" if count == 1 else "items"
-    suffix = f", {extra}" if extra else ""
-    print(f"### {label} ({count} {plural}{suffix})", file=cfg.out)
+    details = [f"{count} {plural}"] if cfg.fmt == OutputFormat.TERMINAL else []
+    details += [extra] if extra else []
+    print(f"### {label}" + (f" ({', '.join(details)})" if details else ""), file=cfg.out)
 
 
 async def _print_old_bugs(
@@ -357,7 +359,7 @@ async def _print_old_bugs(
 
         case OutputFormat.MARKDOWN:
             exp_tasks = list(set(expire_level1) | set(expire_level2))
-            _print_section_header("Old", exp_tasks, out_cfg)
+            _print_section_header("Old items", exp_tasks, out_cfg)
             await _print_bugs(exp_tasks, ctx, out_cfg, extended, order_by_date=True)
 
         case _:
